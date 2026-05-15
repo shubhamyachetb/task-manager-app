@@ -1,36 +1,43 @@
 // ============================================
 // TASK LIST COMPONENT
 // ============================================
-// WHY THIS COMPONENT EXISTS:
-// This is where ALL todo logic lives now
-// Before: Logic was scattered in App.jsx
-// Now: Logic is here in TaskList component
+// WHY THIS COMPONENT IS REFACTORED:
+// Before: Tasks were global (all users saw same tasks)
+// Now: Tasks are user-specific (each user sees only their tasks)
 //
-// Benefits:
-// - TodoPage is clean and simple
-// - TaskList is reusable
-// - Easy to test separately
-// - Manages only task-related state
+// Key changes:
+// - Gets logged-in user email from AuthContext
+// - Uses todoService for ALL task operations
+// - All tasks are isolated per user
+//
+// IMPORTANT: This component now properly handles multi-user scenarios!
 
 import { useState, useEffect } from 'react';
 import { useContext } from 'react';
 import { AuthContext } from '../../context/AuthContext';
+import todoService from '../../services/todoService';
 import TaskItem from './TaskItem';
 import FilterButtons from './FilterButtons';
 import '../../styles/todo.css';
 
 export default function TaskList() {
-  // Get user from context (so we can show user-specific message)
+  // ============================================
+  // GET LOGGED-IN USER FROM CONTEXT
+  // ============================================
+  // This is CRITICAL: We get the current user's email
+  // We use this email to access ONLY that user's tasks
   const { user } = useContext(AuthContext);
 
   // ============================================
   // STATE MANAGEMENT
   // ============================================
 
-  // All tasks for this user
+  // Tasks for ONLY the logged-in user
+  // When user A logs out and user B logs in, this updates automatically
   const [tasks, setTasks] = useState(() => {
-    const savedTasks = localStorage.getItem('tasks');
-    return savedTasks ? JSON.parse(savedTasks) : [];
+    if (!user) return [];
+    // Load tasks for THIS user from todoService
+    return todoService.getTodosByUser(user.email);
   });
 
   // What user is typing in input box
@@ -40,13 +47,29 @@ export default function TaskList() {
   const [filter, setFilter] = useState('all');
 
   // ============================================
-  // SIDE EFFECTS
+  // EFFECT: LOAD TASKS WHEN USER CHANGES
   // ============================================
-  // Save tasks to localStorage whenever they change
+  // When logged-in user changes (login/logout), reload their tasks
   useEffect(() => {
-    localStorage.setItem('tasks', JSON.stringify(tasks));
-    console.log('📦 Tasks saved to localStorage:', tasks);
-  }, [tasks]);
+    if (user) {
+      // Load tasks for this user from todoService
+      const userTasks = todoService.getTodosByUser(user.email);
+      setTasks(userTasks);
+      console.log(`📝 Loaded ${userTasks.length} tasks for ${user.email}`);
+    }
+  }, [user?.email]); // Re-run when user email changes (different user logged in)
+
+  // ============================================
+  // EFFECT: SAVE TASKS TO LOCALSTORAGE
+  // ============================================
+  // When tasks change, automatically save them to localStorage
+  // The tasks will be saved under 'tasks-user@email.com' key
+  useEffect(() => {
+    if (user && tasks.length >= 0) {
+      // Save tasks for THIS user using todoService
+      todoService.saveTodosForUser(user.email, tasks);
+    }
+  }, [tasks, user?.email]); // Re-run when tasks OR user email changes
 
   // ============================================
   // FILTER LOGIC
@@ -80,40 +103,44 @@ export default function TaskList() {
       return;
     }
 
-    const newTask = {
-      id: Date.now(),
-      text: inputValue,
-      completed: false,
-      createdAt: new Date().toLocaleString(),
-    };
+    // Use todoService to add task for THIS user
+    const result = todoService.addTodoForUser(user.email, inputValue);
 
-    setTasks([...tasks, newTask]);
-    setInputValue('');
-    console.log('✅ Task added:', newTask);
+    if (result.success) {
+      // Reload tasks from todoService
+      setTasks(todoService.getTodosByUser(user.email));
+      setInputValue('');
+    }
   };
 
   // Mark task as completed/pending
   const handleToggleTask = (taskId) => {
-    setTasks(
-      tasks.map((task) =>
-        task.id === taskId
-          ? { ...task, completed: !task.completed }
-          : task
-      )
-    );
+    // Use todoService to toggle task for THIS user
+    todoService.toggleTodoForUser(user.email, taskId);
+
+    // Reload tasks from todoService
+    setTasks(todoService.getTodosByUser(user.email));
   };
 
   // Delete a task
   const handleDeleteTask = (taskId) => {
-    setTasks(tasks.filter((task) => task.id !== taskId));
-    console.log('🗑️ Task deleted:', taskId);
+    // Use todoService to delete task for THIS user
+    todoService.deleteTodoForUser(user.email, taskId);
+
+    // Reload tasks from todoService
+    setTasks(todoService.getTodosByUser(user.email));
   };
 
   // Clear all completed tasks
   const handleClearCompleted = () => {
-    const tasksToDelete = tasks.filter((task) => task.completed).length;
-    setTasks(tasks.filter((task) => !task.completed));
-    console.log(`🧹 Cleared ${tasksToDelete} completed tasks`);
+    // Use todoService to clear completed tasks for THIS user
+    const result = todoService.clearCompletedForUser(user.email);
+
+    if (result.success) {
+      // Reload tasks from todoService
+      setTasks(todoService.getTodosByUser(user.email));
+      console.log(result.message);
+    }
   };
 
   // Handle Enter key to add task
